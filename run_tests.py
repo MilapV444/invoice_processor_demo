@@ -16,6 +16,7 @@ TEST_CASES = [
     ("ec2_split_3.pdf", "HOLD", "over-billed"),
     ("ec3_original.pdf", "APPROVE", "within tolerance"),
     ("ec3_dupe.pdf", "REJECT", "Duplicate"),
+    ("ec4_no_po.pdf", "APPROVE", "PO inferred"),
 ]
 
 

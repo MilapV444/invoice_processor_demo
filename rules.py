@@ -97,18 +97,24 @@ def po_match(context: RuleContext) -> RuleResult:
                 context.matched_po = po_number
                 return RuleResult(True, None, f"Matched PO {po_number}")
 
+    # Infer only from vendor AND line items: every invoice line must appear on the PO.
+    items = context.invoice.line_items
     candidates = [
         po_number for po_number, po in context.pos.items()
-        if same_vendor(po["vendor"], context.invoice.vendor)
+        if items
+        and same_vendor(po["vendor"], context.invoice.vendor)
         and all(
             any(item.description.lower() in po_item.lower() for po_item in po["line_items"])
-            for item in context.invoice.line_items
+            for item in items
         )
     ]
     if len(candidates) == 1:
         context.matched_po = candidates[0]
         context.po_inferred = True
-        return RuleResult(True, None, f"PO inferred: {candidates[0]}")
+        return RuleResult(
+            True, None,
+            f"PO inferred: {candidates[0]} (vendor + {len(items)}/{len(items)} line items)",
+        )
     return RuleResult(False, "HOLD", "No matching PO found")
 
 
