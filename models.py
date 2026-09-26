@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 EXTRACTION_FIELDS = (
@@ -16,14 +16,16 @@ EXTRACTION_FIELDS = (
 
 
 class LineItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     description: str
-    quantity: Decimal
-    unit_price: Decimal
-    amount: Decimal
+    quantity: Decimal | None = None
+    unit_price: Decimal | None = None
+    amount: Decimal | None = None
 
 
 class Invoice(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     vendor: str | None = None
     invoice_no: str | None = None
@@ -35,13 +37,14 @@ class Invoice(BaseModel):
     total: Decimal | None = None
     confidence: dict[str, float]
 
+    @field_validator("line_items", mode="before")
+    @classmethod
+    def null_line_items_means_none(cls, value: object) -> object:
+        return [] if value is None else value
+
     @model_validator(mode="after")
     def confidence_covers_every_field(self) -> "Invoice":
-        missing = set(EXTRACTION_FIELDS) - set(self.confidence)
-        unexpected = set(self.confidence) - set(EXTRACTION_FIELDS)
-        if missing or unexpected:
-            raise ValueError(
-                f"Confidence keys must match extraction fields; missing={sorted(missing)}, "
-                f"unexpected={sorted(unexpected)}"
-            )
+        # A field Claude gave no confidence for is treated as unreadable (0.0),
+        # so the confidence rule holds it for a human instead of crashing.
+        self.confidence = {name: self.confidence.get(name, 0.0) for name in EXTRACTION_FIELDS}
         return self

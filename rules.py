@@ -32,6 +32,24 @@ def normalise_invoice_no(invoice_no: str) -> str:
     return re.sub(r"[^a-z0-9]", "", without_zeros)
 
 
+COMPANY_WORDS = {"private": "pvt", "limited": "ltd", "and": "&"}
+
+
+def normalise_vendor(vendor: str) -> str:
+    # "Bharat IT Solutions Pvt. Ltd." and "Bharat IT Solutions Private Limited" match.
+    words = re.sub(r"[^a-z0-9&]+", " ", vendor.lower()).split()
+    return " ".join(COMPANY_WORDS.get(word, word) for word in words)
+
+
+def normalise_po(po_ref: str) -> str:
+    # "PO-4512", "PO 4512", "po#4512" and "4512" all become "4512".
+    return re.sub(r"[^a-z0-9]", "", po_ref.lower()).removeprefix("po")
+
+
+def same_vendor(first: str | None, second: str | None) -> bool:
+    return bool(first and second) and normalise_vendor(first) == normalise_vendor(second)
+
+
 def required_fields(context: RuleContext) -> RuleResult:
     missing = [name for name, value in (
         ("invoice number", context.invoice.invoice_no),
@@ -54,7 +72,7 @@ def confidence(context: RuleContext) -> RuleResult:
 
 
 def approved_vendor(context: RuleContext) -> RuleResult:
-    if context.invoice.vendor not in context.vendors:
+    if not any(same_vendor(context.invoice.vendor, vendor) for vendor in context.vendors):
         return RuleResult(False, "REJECT", "Vendor not on approved list")
     return RuleResult(True, None, "Vendor is on the approved list")
 
@@ -62,7 +80,7 @@ def approved_vendor(context: RuleContext) -> RuleResult:
 def duplicate(context: RuleContext) -> RuleResult:
     invoice_no = normalise_invoice_no(context.invoice.invoice_no or "")
     for row in context.processed:
-        if (row["vendor"] == context.invoice.vendor
+        if (same_vendor(row["vendor"], context.invoice.vendor)
                 and row["normalised_invoice_no"] == invoice_no
                 and Decimal(row["total"]) == context.invoice.total):
             return RuleResult(
@@ -73,13 +91,15 @@ def duplicate(context: RuleContext) -> RuleResult:
 
 
 def po_match(context: RuleContext) -> RuleResult:
-    if context.invoice.po_ref and context.invoice.po_ref in context.pos:
-        context.matched_po = context.invoice.po_ref
-        return RuleResult(True, None, f"Matched PO {context.matched_po}")
+    if context.invoice.po_ref:
+        for po_number in context.pos:
+            if normalise_po(po_number) == normalise_po(context.invoice.po_ref):
+                context.matched_po = po_number
+                return RuleResult(True, None, f"Matched PO {po_number}")
 
     candidates = [
         po_number for po_number, po in context.pos.items()
-        if po["vendor"] == context.invoice.vendor
+        if same_vendor(po["vendor"], context.invoice.vendor)
         and all(
             any(item.description.lower() in po_item.lower() for po_item in po["line_items"])
             for item in context.invoice.line_items
