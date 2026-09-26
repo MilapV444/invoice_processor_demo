@@ -1,6 +1,7 @@
 import re
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from typing import Callable
 
@@ -62,11 +63,12 @@ def required_fields(context: RuleContext) -> RuleResult:
 
 
 def confidence(context: RuleContext) -> RuleResult:
-    for field_name in ("vendor", "invoice_no", "total"):
+    labels = {"vendor": "vendor", "invoice_no": "invoice number", "total": "total"}
+    for field_name, label in labels.items():
         if context.invoice.confidence[field_name] < CONFIDENCE_CUTOFF:
             return RuleResult(
                 False, "HOLD",
-                f"Low confidence reading {field_name}, please verify",
+                f"Low confidence reading {label}, please verify",
             )
     return RuleResult(True, None, "Key fields meet confidence threshold")
 
@@ -83,9 +85,11 @@ def duplicate(context: RuleContext) -> RuleResult:
         if (same_vendor(row["vendor"], context.invoice.vendor)
                 and row["normalised_invoice_no"] == invoice_no
                 and Decimal(row["total"]) == context.invoice.total):
+            original = row["invoice_no"] or row["normalised_invoice_no"]
+            when = datetime.fromisoformat(row["processed_at"]).strftime("%d %b %Y at %H:%M UTC")
             return RuleResult(
                 False, "REJECT",
-                f"Duplicate of {row['normalised_invoice_no']} processed on {row['processed_at']}",
+                f"Duplicate of invoice {original}, already processed on {when}",
             )
     return RuleResult(True, None, "No matching processed invoice found")
 

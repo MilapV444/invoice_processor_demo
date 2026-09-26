@@ -25,6 +25,23 @@ STAGE_LABELS = {
     "log": "Log",
 }
 STATUS_ICONS = {"ok": "✅", "warn": "⚠️"}
+# Sidebar samples in demo order, with a one-line hint of what each one shows.
+SAMPLES = {
+    "happy_1.pdf": "Clean invoice that matches its PO → APPROVE",
+    "happy_2.pdf": "Clean invoice that matches its PO → APPROVE",
+    "happy_3.pdf": "Clean invoice that matches its PO → APPROVE",
+    "ec1_scanned.pdf": "Scanned invoice with a blurry total → HOLD",
+    "ec2_split_1.pdf": "PO split across 3 invoices, part 1 → APPROVE",
+    "ec2_split_2.pdf": "PO split across 3 invoices, part 2 → APPROVE",
+    "ec2_split_3.pdf": "PO split across 3 invoices, part 3 over-bills → HOLD",
+    "ec3_original.pdf": "Original invoice INV-0045 → APPROVE",
+    "ec3_dupe.pdf": "Same invoice re-sent as INV-45 → REJECT",
+    "ec4_no_po.pdf": "No PO number, inferred from vendor + items → APPROVE",
+}
+
+
+def format_inr(amount: str | None) -> str:
+    return f"{float(amount):,.2f}" if amount else "—"
 
 
 def trace_line(entry: dict[str, str]) -> str:
@@ -97,7 +114,7 @@ def dashboard_tab() -> None:
         "Run": row["run_id"],
         "File": Path(row["file"]).name,
         "Vendor": row["vendor"],
-        "Total (INR)": row["total"],
+        "Total (INR)": format_inr(row["total"]),
         "Decision": row["decision"],
         "Reason": row["reason"],
         "Processed (UTC)": row["created_at"][:19].replace("T", " "),
@@ -126,9 +143,10 @@ with st.sidebar:
         st.session_state.pop("last_result", None)
         st.success("Run history cleared.")
     st.subheader("Sample invoices")
-    for pdf in sorted(SAMPLE_DIR.glob("*.pdf")):
-        if st.button(pdf.name, key=f"sample_{pdf.name}", use_container_width=True):
-            sample = pdf
+    st.caption("Hover a button to see what it demonstrates.")
+    for name, hint in SAMPLES.items():
+        if st.button(name, key=f"sample_{name}", help=hint, use_container_width=True):
+            sample = SAMPLE_DIR / name
 
 process, dashboard = st.tabs(["Process invoice", "Dashboard"])
 with process:

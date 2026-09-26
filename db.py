@@ -29,6 +29,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS processed_invoices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             vendor TEXT NOT NULL,
+            invoice_no TEXT,
             normalised_invoice_no TEXT NOT NULL,
             po_number TEXT,
             total TEXT NOT NULL,
@@ -36,6 +37,10 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
             processed_at TEXT NOT NULL
         );
     """)
+    # Upgrade databases created before invoice_no was stored as printed.
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(processed_invoices)")}
+    if "invoice_no" not in columns:
+        connection.execute("ALTER TABLE processed_invoices ADD COLUMN invoice_no TEXT")
     return connection
 
 
@@ -66,14 +71,14 @@ def save_run(connection: sqlite3.Connection, file: str, vendor: str | None,
     connection.commit()
 
 
-def save_processed_invoice(connection: sqlite3.Connection, vendor: str,
+def save_processed_invoice(connection: sqlite3.Connection, vendor: str, invoice_no: str,
                            normalised_invoice_no: str, po_number: str | None,
                            total: str, decision: str) -> None:
     connection.execute(
         "INSERT INTO processed_invoices "
-        "(vendor, normalised_invoice_no, po_number, total, decision, processed_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (vendor, normalised_invoice_no, po_number, total, decision,
+        "(vendor, invoice_no, normalised_invoice_no, po_number, total, decision, processed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (vendor, invoice_no, normalised_invoice_no, po_number, total, decision,
          datetime.now(timezone.utc).isoformat()),
     )
     connection.commit()

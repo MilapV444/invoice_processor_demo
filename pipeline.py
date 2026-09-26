@@ -65,7 +65,7 @@ def process_invoice(pdf_path: str | Path, on_trace: Callable[[dict[str, str]], N
                  decision, reason, trace)
         if invoice.vendor and invoice.invoice_no and invoice.total is not None:
             save_processed_invoice(
-                connection, invoice.vendor, normalise_invoice_no(invoice.invoice_no),
+                connection, invoice.vendor, invoice.invoice_no, normalise_invoice_no(invoice.invoice_no),
                 context.matched_po, str(invoice.total), decision,
             )
 
