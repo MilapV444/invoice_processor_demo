@@ -1,0 +1,126 @@
+import re
+import sqlite3
+from dataclasses import dataclass, field
+from decimal import Decimal
+from typing import Callable
+
+from config import CONFIDENCE_CUTOFF, TOLERANCE_PERCENT
+from models import Invoice
+
+
+@dataclass
+class RuleContext:
+    invoice: Invoice
+    vendors: set[str]
+    pos: dict[str, dict[str, object]]
+    processed: list[sqlite3.Row]
+    matched_po: str | None = None
+    po_inferred: bool = False
+    details: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RuleResult:
+    passed: bool
+    outcome: str | None
+    reason: str
+
+
+def normalise_invoice_no(invoice_no: str) -> str:
+    # Drop leading zeros per number first, so "INV-0045" and "INV-45" match.
+    without_zeros = re.sub(r"\d+", lambda match: str(int(match.group())), invoice_no.lower())
+    return re.sub(r"[^a-z0-9]", "", without_zeros)
+
+
+def required_fields(context: RuleContext) -> RuleResult:
+    missing = [name for name, value in (
+        ("invoice number", context.invoice.invoice_no),
+        ("vendor", context.invoice.vendor),
+        ("total", context.invoice.total),
+    ) if not value]
+    if missing:
+        return RuleResult(False, "HOLD", f"Missing: {', '.join(missing)}")
+    return RuleResult(True, None, "Required fields present")
+
+
+def confidence(context: RuleContext) -> RuleResult:
+    for field_name in ("vendor", "invoice_no", "total"):
+        if context.invoice.confidence[field_name] < CONFIDENCE_CUTOFF:
+            return RuleResult(
+                False, "HOLD",
+                f"Low confidence reading {field_name}, please verify",
+            )
+    return RuleResult(True, None, "Key fields meet confidence threshold")
+
+
+def approved_vendor(context: RuleContext) -> RuleResult:
+    if context.invoice.vendor not in context.vendors:
+        return RuleResult(False, "REJECT", "Vendor not on approved list")
+    return RuleResult(True, None, "Vendor is on the approved list")
+
+
+def duplicate(context: RuleContext) -> RuleResult:
+    invoice_no = normalise_invoice_no(context.invoice.invoice_no or "")
+    for row in context.processed:
+        if (row["vendor"] == context.invoice.vendor
+                and row["normalised_invoice_no"] == invoice_no
+                and Decimal(row["total"]) == context.invoice.total):
+            return RuleResult(
+                False, "REJECT",
+                f"Duplicate of {row['normalised_invoice_no']} processed on {row['processed_at']}",
+            )
+    return RuleResult(True, None, "No matching processed invoice found")
+
+
+def po_match(context: RuleContext) -> RuleResult:
+    if context.invoice.po_ref and context.invoice.po_ref in context.pos:
+        context.matched_po = context.invoice.po_ref
+        return RuleResult(True, None, f"Matched PO {context.matched_po}")
+
+    candidates = [
+        po_number for po_number, po in context.pos.items()
+        if po["vendor"] == context.invoice.vendor
+        and all(
+            any(item.description.lower() in po_item.lower() for po_item in po["line_items"])
+            for item in context.invoice.line_items
+        )
+    ]
+    if len(candidates) == 1:
+        context.matched_po = candidates[0]
+        context.po_inferred = True
+        return RuleResult(True, None, f"PO inferred: {candidates[0]}")
+    return RuleResult(False, "HOLD", "No matching PO found")
+
+
+def over_billing(context: RuleContext) -> RuleResult:
+    po = context.pos[context.matched_po]
+    billed = sum(
+        (Decimal(row["total"]) for row in context.processed
+         if row["po_number"] == context.matched_po and row["decision"] == "APPROVE"),
+        Decimal("0"),
+    )
+    allowed = Decimal(str(po["amount"])) * (Decimal("1") + Decimal(str(TOLERANCE_PERCENT)))
+    projected = billed + context.invoice.total
+    if projected > allowed:
+        excess = projected - allowed
+        return RuleResult(
+            False, "HOLD",
+            f"PO {context.matched_po} would be over-billed by INR {excess:,.2f}",
+        )
+    return RuleResult(True, None, f"PO {context.matched_po} is within tolerance")
+
+
+def all_pass(context: RuleContext) -> RuleResult:
+    note = " (PO inferred)" if context.po_inferred else ""
+    return RuleResult(True, "APPROVE", f"Matches PO {context.matched_po} within tolerance{note}")
+
+
+RULES: list[Callable[[RuleContext], RuleResult]] = [
+    required_fields,
+    confidence,
+    approved_vendor,
+    duplicate,
+    po_match,
+    over_billing,
+    all_pass,
+]
