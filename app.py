@@ -91,12 +91,22 @@ def card_head(label: str, title: str, right: str = "") -> str:
             f'<div class="card-title">{title}</div></div>{right}</div>')
 
 
-def stage_bubble(entry: dict[str, str]) -> str:
+def stage_bubble(entry: dict[str, str], decision: str | None = None) -> str:
     label = STAGE_LABELS.get(entry["stage"], entry["stage"])
-    warn = " warn" if entry["status"] != "ok" else ""
-    icon = "!" if warn else "✓"
-    return (f'<div class="msg"><div class="bubble sys{warn}"><span class="stage">{icon} {esc(label)}</span>'
+    if entry["status"] == "ok":
+        return (f'<div class="msg"><div class="bubble sys"><span class="stage">✓ {esc(label)}</span>'
+                f'{esc(entry["detail"])}</div></div>')
+    # The one check that failed is shown in the colour of the outcome it caused,
+    # so it stands out: amber for HOLD, red for REJECT.
+    outcome = f" → {decision}" if decision else ""
+    tone = (decision or "hold").lower()
+    return (f'<div class="msg"><div class="bubble alert {tone}"><span class="stage">'
+            f'{"✕" if tone == "reject" else "!"} {esc(label)} <b class="failed">FAILED{esc(outcome)}</b></span>'
             f'{esc(entry["detail"])}</div></div>')
+
+
+def trace_bubbles(trace: list[dict[str, str]], decision: str | None = None) -> list[str]:
+    return [stage_bubble(entry, decision) for entry in trace]
 
 
 def user_bubble(file_name: str, time: str) -> str:
@@ -144,13 +154,14 @@ def show_feed(slot, bubbles: list[str], extra: str = "") -> None:
 
 def run_pipeline(slot, pdf_path: Path, display_name: str) -> None:
     started = clock()
-    bubbles = [user_bubble(display_name, started)]
-    show_feed(slot, bubbles)
+    opening = [user_bubble(display_name, started)]
+    trace: list[dict[str, str]] = []
+    show_feed(slot, opening)
 
     def on_trace(entry: dict[str, str]) -> None:
-        bubbles.append(stage_bubble(entry))
+        trace.append(entry)
         # Extraction is the slow step, so show a typing indicator right after ingest.
-        show_feed(slot, bubbles, TYPING_BUBBLE if entry["stage"] == "ingest" else "")
+        show_feed(slot, opening + trace_bubbles(trace), TYPING_BUBBLE if entry["stage"] == "ingest" else "")
 
     try:
         result = process_invoice(pdf_path, on_trace=on_trace)
@@ -162,11 +173,13 @@ def run_pipeline(slot, pdf_path: Path, display_name: str) -> None:
         message = None
     if message:
         st.session_state.pop("last_result", None)
-        show_feed(slot, bubbles + [error_bubble(message)])
+        show_feed(slot, opening + trace_bubbles(trace) + [error_bubble(message)])
         return
 
     finished = clock()
-    show_feed(slot, bubbles + [decision_bubble(result["decision"], result["reason"], finished)])
+    # Final redraw now that the decision is known, so the failed check gets its outcome colour.
+    show_feed(slot, opening + trace_bubbles(trace, result["decision"])
+              + [decision_bubble(result["decision"], result["reason"], finished)])
     st.session_state["queue_page"] = 0  # jump back to the newest invoices
     st.session_state["last_result"] = {
         "file": display_name,
@@ -180,7 +193,7 @@ def run_pipeline(slot, pdf_path: Path, display_name: str) -> None:
 
 def replay_feed(slot, last: dict) -> None:
     show_feed(slot, [user_bubble(last["file"], last["started"])]
-              + [stage_bubble(entry) for entry in last["trace"]]
+              + trace_bubbles(last["trace"], last["decision"])
               + [decision_bubble(last["decision"], last["reason"], last["finished"])])
 
 
@@ -271,7 +284,7 @@ def dashboard_tab() -> None:
     if selection.selection.rows:
         run = shown[selection.selection.rows[0]]
         with st.container(key="trace_card"):
-            bubbles = ([stage_bubble(entry) for entry in json.loads(run["trace_json"])]
+            bubbles = (trace_bubbles(json.loads(run["trace_json"]), run["decision"])
                        + [decision_bubble(run["decision"], run["reason"], clock(run["created_at"]))])
             html_block(f'<div class="feed-head"><div class="feed-title"><span class="dot"></span>'
                        f'Trace · run {run["run_id"]}</div><span class="mono">{esc(Path(run["file"]).name)}</span></div>'
