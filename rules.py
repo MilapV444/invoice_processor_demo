@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Callable
 
-from config import CONFIDENCE_CUTOFF, TOLERANCE_PERCENT
+from config import CONFIDENCE_CUTOFF, DISPLAY_TZ, TOLERANCE_PERCENT
 from models import Invoice
 
 
@@ -86,7 +86,7 @@ def duplicate(context: RuleContext) -> RuleResult:
                 and row["normalised_invoice_no"] == invoice_no
                 and Decimal(row["total"]) == context.invoice.total):
             original = row["invoice_no"] or row["normalised_invoice_no"]
-            when = datetime.fromisoformat(row["processed_at"]).strftime("%d %b %Y at %H:%M UTC")
+            when = datetime.fromisoformat(row["processed_at"]).astimezone(DISPLAY_TZ).strftime("%d %b %Y at %H:%M %Z")
             return RuleResult(
                 False, "REJECT",
                 f"Duplicate of invoice {original}, already processed on {when}",
