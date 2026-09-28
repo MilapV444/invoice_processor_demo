@@ -4,6 +4,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import anthropic
 import streamlit as st
 
 from config import DB_PATH, DISPLAY_TZ
@@ -145,6 +146,25 @@ def queue_rows_html(rows: list[dict]) -> str:
 
 # ---- Processing ------------------------------------------------------------------
 
+LIMIT_MESSAGE = ("This demo has reached its API usage limit, so new invoices can't be read right now. "
+                 "Past results are still on the Dashboard, and the recorded video shows the full walkthrough.")
+BUSY_MESSAGE = "The extraction service is busy right now. Please wait a minute and try again."
+UNREADABLE_MESSAGE = "The invoice could not be read. Please check it is a valid PDF and try again."
+
+
+def friendly_error(error: Exception) -> str:
+    """Turn an extraction failure into a plain-English message for the feed."""
+    if isinstance(error, anthropic.RateLimitError):
+        # A normal rate limit says when to retry; the monthly spend cap does not.
+        return BUSY_MESSAGE if error.response.headers.get("retry-after") else LIMIT_MESSAGE
+    if isinstance(error, anthropic.BadRequestError):
+        text = str(error.message).lower()
+        # A spend limit set in the Console, or a used-up prepaid balance.
+        if "usage limit" in text or "credit balance" in text:
+            return LIMIT_MESSAGE
+    return UNREADABLE_MESSAGE
+
+
 def show_feed(slot, bubbles: list[str], extra: str = "") -> None:
     # The whole feed is one HTML block that is redrawn each time, so a new run
     # replaces everything from the previous invoice instead of leaving it behind.
@@ -167,8 +187,8 @@ def run_pipeline(slot, pdf_path: Path, display_name: str) -> None:
         result = process_invoice(pdf_path, on_trace=on_trace)
     except RuntimeError as error:  # raised by extract.py when no API key is configured
         message = str(error)
-    except Exception:
-        message = "The invoice could not be read. Please check it is a valid PDF and try again."
+    except Exception as error:
+        message = friendly_error(error)
     else:
         message = None
     if message:
