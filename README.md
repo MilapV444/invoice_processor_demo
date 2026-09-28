@@ -65,13 +65,14 @@ In the sidebar, **Reset demo data** clears the run history, and the sample butto
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Streamlit UI: process tab, dashboard, sidebar |
+| `app.py` | Streamlit UI: Workspace tab (upload, queue, live decision feed), Dashboard tab, sidebar |
+| `styles.css` | Visual design (fonts, colours, cards, feed bubbles), loaded by `app.py` |
 | `pipeline.py` | Runs the stages in order, emits `{stage, status, detail}` trace entries, saves the run |
 | `extract.py` | Sends the PDF to Claude and validates the JSON it returns |
 | `models.py` | Pydantic `Invoice` / `LineItem` schema with per-field confidence |
 | `rules.py` | The decision rules, in one ordered list |
 | `db.py` | SQLite tables for run history and processed invoices |
-| `config.py` | Confidence cutoff, tolerance, file paths |
+| `config.py` | Confidence cutoff, tolerance, display time zone (IST), file paths |
 | `data/` | Approved vendors and purchase orders |
 | `test_invoices/` | Generated sample invoices |
 
